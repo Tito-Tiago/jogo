@@ -16,22 +16,41 @@
     { id: 'indisponivel', name: 'Fornecedor indisponível', effect: 'A procedência selecionada está indisponível nesta rodada.', concept: 'Dependências e restrições podem exigir mudanças no planejamento.' },
     { id: 'defeito', name: 'Ingrediente defeituoso', effect: 'O último ingrediente comprado de cada jogador perde 1 ponto de qualidade, até o mínimo de 2.', concept: 'Falhas descobertas depois da entrega podem afetar a qualidade.' },
     { id: 'escopo', name: 'Mudança de escopo', effect: 'Antes de comprar, você pode optar pela próxima receita maior.', concept: 'Novos requisitos podem agregar valor, mas exigem mais recursos.' },
-    { id: 'otimista', name: 'Estimativa otimista', effect: 'Antes de comprar, você pode escolher rolar os dados duas vezes e aceitar o segundo resultado.', concept: 'Buscar um resultado melhor também pode trazer um novo risco.' },
+    { id: 'otimista', name: 'Estimativa otimista', effect: 'Depois de ver os dados da sua compra, você pode rolar de novo uma única vez, mas fica obrigatoriamente com o segundo resultado.', concept: 'Buscar um resultado melhor também pode trazer um novo risco.' },
     { id: 'inspecao', name: 'Inspeção de qualidade', effect: 'Antes de comprar, você pode pagar 1 moeda para acrescentar 1 ponto à qualidade, até 12.', concept: 'Garantia de qualidade tem custo e precisa ser avaliada no orçamento.' },
     { id: 'negociacao', name: 'Negociação antecipada', effect: 'Compras selecionadas custam 4 moedas nesta rodada.', concept: 'Negociações podem reduzir custos sem alterar o escopo.' },
     { id: 'lote', name: 'Lote de qualidade duvidosa', effect: 'Compras econômicas perdem 1 ponto de qualidade, até o mínimo de 2.', concept: 'O preço de aquisição não é o único fator na avaliação de qualidade.' },
     { id: 'revisao', name: 'Revisão de estimativa', effect: 'Você pode registrar uma nova previsão de gasto antes de comprar.', concept: 'Reestimar usa novas informações sem apagar a previsão original.' }
   ];
+  // Pontuação da estimativa. A precisão do gasto e a faixa de qualidade valem pontos,
+  // e faixas mais estreitas recebem bônus maiores porque correm mais risco de errar.
+  const SCORING = { costExact: 2, costFloor: -2, revisedCap: 1, rangeMax: 3, rangeStep: .5, rangeMiss: -1 };
+  // Eventos que só fazem sentido depois que alguém já comprou algo.
+  const EVENT_REQUIRES_PURCHASE = new Set(['defeito', 'revisao']);
+  function eventApplicable(eventId, state) {
+    const active = state.players.filter((player) => !player.finished);
+    if (EVENT_REQUIRES_PURCHASE.has(eventId) && (state.round < 2 || !active.some((player) => player.purchases.length))) return false;
+    if (eventId === 'escopo' && !active.some((player) => player.recipeId !== 'completo')) return false;
+    return true;
+  }
   const eventCost = (sourceId, eventId) => Math.max(1, SOURCES[sourceId].cost + (eventId === 'inflacao' && sourceId === 'economical' ? 1 : 0) - (eventId === 'promocao' || (eventId === 'negociacao' && sourceId === 'selected') ? 1 : 0));
-  function drawEvent(state, random = Math.random) {
-    if (!state.eventDeck || !state.eventDeck.length) {
-      state.eventDeck = EVENTS.map((event) => event.id);
-      for (let i = state.eventDeck.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [state.eventDeck[i], state.eventDeck[j]] = [state.eventDeck[j], state.eventDeck[i]];
-      }
+  function shuffledDeck(random) {
+    const deck = EVENTS.map((event) => event.id);
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
     }
-    state.currentEvent = state.eventDeck.pop();
+    return deck;
+  }
+  function drawEvent(state, random = Math.random) {
+    if (!state.eventDeck || !state.eventDeck.length) state.eventDeck = shuffledDeck(random);
+    // Cartas que não fazem sentido agora continuam no baralho para uma rodada futura.
+    let index = state.eventDeck.findLastIndex((id) => eventApplicable(id, state));
+    if (index === -1) {
+      state.eventDeck = shuffledDeck(random);
+      index = state.eventDeck.findLastIndex((id) => eventApplicable(id, state));
+    }
+    state.currentEvent = state.eventDeck.splice(index, 1)[0];
     state.eventHistory = state.eventHistory || [];
     state.eventHistory.push({ round: state.round, id: state.currentEvent });
     if (state.currentEvent === 'defeito') state.players.forEach((player) => {
@@ -45,26 +64,54 @@
   const remaining = (player) => recipe(player).ingredients.filter((name) => !player.purchases.some((item) => item.ingredient === name));
   const complete = (player) => remaining(player).length === 0;
   const average = (player) => player.purchases.length ? player.purchases.reduce((sum, item) => sum + item.quality, 0) / player.purchases.length : 0;
-  const score = (player) => complete(player) ? average(player) + recipe(player).bonus : null;
+  const costPrecision = (estimate, actual, cap = SCORING.costExact) => Math.min(cap, Math.max(SCORING.costFloor, SCORING.costExact - Math.abs(actual - estimate)));
+  function costScore(player) {
+    const original = costPrecision(player.estimateCost, spent(player));
+    // A revisão protege contra erros grandes, mas vale no máximo +1.
+    return player.revisedEstimate == null ? original : Math.max(original, costPrecision(player.revisedEstimate, spent(player), SCORING.revisedCap));
+  }
+  const rangeReward = (low, high) => Math.max(0, SCORING.rangeMax - SCORING.rangeStep * (high - low));
+  const inRange = (player) => average(player) >= player.estimateLow - 1e-9 && average(player) <= player.estimateHigh + 1e-9;
+  const rangeScore = (player) => inRange(player) ? rangeReward(player.estimateLow, player.estimateHigh) : SCORING.rangeMiss;
+  function scoreBreakdown(player) {
+    if (!complete(player)) return null;
+    const parts = { quality: average(player), recipe: recipe(player).bonus, cost: costScore(player), range: rangeScore(player) };
+    return { ...parts, total: parts.quality + parts.recipe + parts.cost + parts.range };
+  }
+  const score = (player) => complete(player) ? scoreBreakdown(player).total : null;
   function roll(sourceId, random = Math.random) {
     if (!Object.hasOwn(SOURCES, sourceId)) throw new Error('Procedência inválida.');
     const die = () => Math.floor(random() * 6) + 1;
     const dice = sourceId === 'economical' ? [die(), die()] : [die()];
     return { dice, quality: dice.reduce((sum, value) => sum + value, 0) + (sourceId === 'selected' ? 6 : 0) };
   }
+  const applyModifier = (base, modifier) => Math.max(2, Math.min(12, base + modifier));
   function buy(player, ingredient, sourceId, random = Math.random, options = {}) {
     const source = Object.hasOwn(SOURCES, sourceId) ? SOURCES[sourceId] : null;
     const eventId = options.eventId;
     const cost = source ? eventCost(sourceId, eventId) + (options.inspect && eventId === 'inspecao' ? 1 : 0) : 0;
     if (player.finished || !source || (eventId === 'indisponivel' && sourceId === 'selected') || !remaining(player).includes(ingredient) || balance(player) < cost) throw new Error('Compra não permitida.');
     let result = roll(sourceId, random);
-    if (options.reroll && eventId === 'otimista') result = roll(sourceId, random);
     const base = result.quality;
-    result.quality = Math.max(2, Math.min(12, base + (options.inspect && eventId === 'inspecao' ? 1 : 0) - (eventId === 'lote' && sourceId === 'economical' ? 1 : 0)));
-    result = { ingredient, sourceId, cost, ...result, adjustment: result.quality - base };
+    const modifier = (options.inspect && eventId === 'inspecao' ? 1 : 0) - (eventId === 'lote' && sourceId === 'economical' ? 1 : 0);
+    result.quality = applyModifier(base, modifier);
+    result = { ingredient, sourceId, cost, ...result, adjustment: result.quality - base, modifier };
     player.purchases.push(result);
     player.finished = complete(player) || balance(player) < SOURCES.economical.cost;
     return result;
+  }
+  // Evento "Estimativa otimista": uma única nova rolagem da última compra, sem custo extra.
+  function rerollLast(player, random = Math.random) {
+    const item = player.purchases.at(-1);
+    if (!item || item.rerolled) throw new Error('Nova rolagem não permitida.');
+    const result = roll(item.sourceId, random);
+    item.firstDice = item.dice;
+    item.firstQuality = item.quality;
+    item.dice = result.dice;
+    item.quality = applyModifier(result.quality, item.modifier || 0);
+    item.adjustment = item.quality - result.quality;
+    item.rerolled = true;
+    return item;
   }
   function nextPlayer(players, currentIndex) {
     for (let distance = 1; distance <= players.length; distance++) {
@@ -74,7 +121,7 @@
     return -1;
   }
   function ranking(players) {
-    return [...players].sort((a, b) => (score(b) ?? -1) - (score(a) ?? -1));
+    return [...players].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity));
   }
   function newPlayer(index) {
     return { id: index + 1, name: `Jogador ${index + 1}`, recipeId: 'classico', estimateCost: 16, estimateLow: 7, estimateHigh: 12, purchases: [], finished: false };
@@ -103,6 +150,8 @@
         const source = Object.hasOwn(SOURCES, item.sourceId) ? SOURCES[item.sourceId] : null;
         if (!source || !Number.isInteger(item.cost) || item.cost < 1 || item.cost > source.cost + 1 || !recipe(player).ingredients.includes(item.ingredient) || names.has(item.ingredient)) return false;
         if (!Array.isArray(item.dice) || item.dice.length !== (item.sourceId === 'economical' ? 2 : 1) || !item.dice.every((value) => Number.isInteger(value) && value >= 1 && value <= 6)) return false;
+        if (item.modifier !== undefined && ![-1, 0, 1].includes(item.modifier)) return false;
+        if (item.rerolled !== undefined && typeof item.rerolled !== 'boolean') return false;
         if (!Number.isInteger(item.adjustment || 0) || item.quality < 2 || item.quality > 12 || item.quality !== item.dice.reduce((sum, value) => sum + value, item.sourceId === 'selected' ? 6 : 0) + (item.adjustment || 0)) return false;
         names.add(item.ingredient);
       }
@@ -110,11 +159,12 @@
     });
     if (!validPlayers) return false;
     if (state.phase === 'handoff' && (!state.handoff || !['planning', 'play'].includes(state.handoff.kind) || !Number.isInteger(state.handoff.index) || !state.players[state.handoff.index])) return false;
+    if (state.pendingResult && state.pendingResult.canReroll !== undefined && (typeof state.pendingResult.canReroll !== 'boolean' || (state.pendingResult.canReroll && state.currentEvent !== 'otimista'))) return false;
     if (state.pendingResult && (state.phase !== 'play' || state.pendingResult.playerIndex !== state.turnIndex || state.pendingResult.purchaseIndex !== state.players[state.turnIndex].purchases.length - 1 || state.pendingResult.purchaseIndex < 0)) return false;
     if (state.phase === 'results' && !state.players.every((player) => player.finished)) return false;
     return true;
   }
-  const api = { BUDGET, RECIPES, SOURCES, EVENTS, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, score, roll, buy, nextPlayer, ranking, newPlayer, newState, validState };
+  const api = { BUDGET, RECIPES, SOURCES, EVENTS, SCORING, eventApplicable, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, costScore, rangeReward, inRange, rangeScore, scoreBreakdown, score, roll, buy, rerollLast, nextPlayer, ranking, newPlayer, newState, validState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BurgerRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

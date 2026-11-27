@@ -75,6 +75,7 @@ async function run() {
     await page.reload();
     assert.ok(await page.locator('#action-dialog').isVisible());
     assert.deepEqual((await state()).players[0].purchases, before.players[0].purchases);
+    if ((await state()).pendingResult.canReroll) await tap('[data-action="keep-roll"]');
     await tap('[data-action="continue-result"]');
     await tap('[data-action="accept-turn"]');
     assert.equal((await state()).turnIndex, 1);
@@ -86,7 +87,7 @@ async function run() {
     while ((await state()).phase !== 'results') {
       const current = await state();
       if (current.phase === 'handoff') { await tap('[data-action="accept-turn"]'); continue; }
-      if (current.pendingResult) { await tap('[data-action="continue-result"]'); continue; }
+      if (current.pendingResult) { await tap(current.pendingResult.canReroll ? '[data-action="keep-roll"]' : '[data-action="continue-result"]'); continue; }
       await page.locator('[data-buy][data-source="economical"]:not(:disabled)').first().tap();
       await tap('[data-action="confirm-dialog"]');
       purchases++;
@@ -95,7 +96,8 @@ async function run() {
     assert.equal(purchases, 11);
     assert.ok((await state()).players.every((player) => player.finished));
     assert.match(await page.locator('main').innerText(), /Ana venceu/);
-    assert.match(await page.locator('main').innerText(), /8,5/);
+    assert.match(await page.locator("main").innerText(), /10,17/);
+    assert.ok(await page.locator(".score-breakdown").count() >= 1, "Mostra a composição da pontuação.");
     await noOverflow();
     await screenshot('results-touch');
     await tap('.navigation [data-tab="concepts"]');
@@ -125,10 +127,10 @@ async function run() {
     while ((await state()).phase !== 'results') {
       const current = await state();
       if (current.phase === 'handoff') { await tap('[data-action="accept-turn"]'); continue; }
-      if (current.pendingResult) { await tap('[data-action="continue-result"]'); continue; }
+      if (current.pendingResult) { await tap(current.pendingResult.canReroll ? '[data-action="keep-roll"]' : '[data-action="continue-result"]'); continue; }
       const source = current.players[current.turnIndex].purchases.length < 4 ? 'selected' : 'economical';
       await page.locator(`[data-buy][data-source="${source}"]:not(:disabled)`).first().tap();
-      if (current.players[current.turnIndex].purchases.length === 3) assert.match(await page.locator('#dialog-content').innerText(), /faltarão moedas/);
+      if (current.players[current.turnIndex].purchases.length === 3) assert.match(await page.locator('#dialog-content').innerText(), /ingredientes restantes custam/);
       await tap('[data-action="confirm-dialog"]');
       purchases++;
       assert.ok(purchases <= 30);

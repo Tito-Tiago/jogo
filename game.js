@@ -13,6 +13,9 @@
   let confirmAction = null;
   let dialogKind = null;
   let storageAvailable = true;
+  let animateRoll = false;
+  let rollTimer = null;
+  const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const esc = (text) => String(text).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const number = (value, digits = 1) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits });
   const points = (value) => number(value, 2);
@@ -66,14 +69,21 @@
       <aside class="panel"><span class="eyebrow">ANTES DE COMEÇAR</span><h3>Uma compra por turno.</h3><ol class="numbered"><li>Cada participante escolhe sua receita e registra uma estimativa.</li><li>Na sua vez, compre um ingrediente. A qualidade é sorteada na hora.</li><li>Conclua a receita e compare sua pontuação — e sua previsão — com as dos colegas.</li></ol><button type="button" class="text-button" data-tab="help">Primeira vez? Abra o tutorial ↗</button></aside></div>`;
   }
 
+  function renderStakes(player) {
+    const reward = R.rangeReward(player.estimateLow, player.estimateHigh);
+    const width = player.estimateHigh - player.estimateLow;
+    return `<div><small>PRECISÃO DO GASTO</small><strong>+${number(R.SCORING.costExact)} se acertar em cheio</strong><p>Cada moeda de diferença tira 1 ponto, até ${number(R.SCORING.costFloor)}.</p></div><div class="${reward ? '' : 'is-safe'}"><small>FAIXA DE QUALIDADE · LARGURA ${number(width)}</small><strong>${reward ? `+${number(reward)} se a média ficar dentro` : 'Faixa segura: 0 ponto se acertar'}</strong><p>${number(R.SCORING.rangeMiss)} se ficar fora. Quanto mais estreita, maior o prêmio — e o risco.</p></div>`;
+  }
+
   function renderPlanning() {
     const player = state.players[state.planningIndex];
     const recipe = R.recipe(player);
     return `${progress(2)}<section class="panel">
       <div class="planning-head"><div><span class="eyebrow">PLANEJAMENTO ${state.planningIndex + 1} DE ${state.players.length}</span><h2>${esc(player.name)}, qual é o plano?</h2><p class="recipe-description">Escolha o que entregar e estime antes de comprar. Todos podem escolher a mesma receita.</p></div><span class="badge">Orçamento: 24 moedas</span></div>
       <h3>1. Escolha a receita</h3><div class="grid-three" role="group" aria-label="Receita">${R.RECIPES.map((item) => `<button type="button" class="recipe-card ${player.recipeId === item.id ? 'selected' : ''}" data-recipe="${item.id}" aria-pressed="${player.recipeId === item.id}"><span class="check" aria-hidden="true">${player.recipeId === item.id ? '●' : '○'}</span><span class="card-kicker">CARTA DE RECEITA</span><span class="recipe-art" aria-hidden="true">🍔</span><strong>${item.name}</strong><small>${item.ingredients.join(' · ')}</small><span class="recipe-footer"><span>${item.ingredients.length} ingredientes</span><span>Bônus +${number(item.bonus)}</span></span></button>`).join('')}</div>
-      <hr class="divider"><h3>2. Registre sua estimativa</h3><p class="muted">O gasto previsto não é uma meta: é sua previsão. A faixa abaixo se refere à <strong>qualidade média</strong>, antes do bônus.</p>
+      <hr class="divider"><h3>2. Registre sua estimativa</h3><p class="muted">O gasto previsto não é uma meta: é sua previsão. A faixa abaixo se refere à <strong>qualidade média</strong>, antes do bônus. <strong>As duas previsões valem pontos no final.</strong></p>
       <form id="planning-form"><div class="form-fields">${numericField('Gasto previsto', 'estimateCost', player.estimateCost, 0, 24, 1, 'Moedas que você acredita que vai gastar.')}${numericField('Qualidade mínima prevista', 'estimateLow', player.estimateLow, 2, 12, .5, 'Limite inferior da sua faixa esperada.')}${numericField('Qualidade máxima prevista', 'estimateHigh', player.estimateHigh, 2, 12, .5, 'Limite superior da sua faixa esperada.')}</div>
+      <div id="estimate-stakes" class="estimate-stakes" aria-live="polite">${renderStakes(player)}</div>
       <div class="source-info"><div><strong>Econômica · 3 moedas</strong><p>Qualidade: 2 dados (2–12). Média esperada: 7.</p></div><div><strong>Selecionada · 5 moedas</strong><p>Qualidade: 1 dado + 6 (7–12). Média esperada: 9,5.</p></div></div>
       <p class="note">Para o <strong>${recipe.name}</strong>, comprar tudo econômico custa <strong>${recipe.ingredients.length * R.SOURCES.economical.cost}</strong> moedas; tudo selecionado custa <strong>${recipe.ingredients.length * R.SOURCES.selected.cost}</strong>. Uma mistura fica entre esses valores. Seu limite continua sendo 24 moedas.</p>
       <p id="form-error" class="error" role="alert" hidden></p><div class="actions end"><button class="text-button" type="button" data-tab="help">Preciso de ajuda</button><button class="primary" type="submit">Confirmar meu planejamento →</button></div></form></section>`;
@@ -85,8 +95,14 @@
     return `${progress(planning ? 2 : 3)}<section class="panel centered"><div class="handoff-icon" aria-hidden="true">↗</div><span class="eyebrow">${planning ? 'PRÓXIMO PLANEJAMENTO' : `RODADA ${state.round} · PASSE A VEZ`}</span><h2>Agora é com<br>${esc(next.name)}.</h2><p class="muted">${planning ? 'Passe a tela para este participante escolher a receita e registrar sua previsão.' : 'Na sua vez, compre um ingrediente da sua receita. Cada participante usa apenas as próprias moedas.'}</p><button class="primary wide" data-action="accept-turn">${planning ? 'Fazer meu planejamento' : 'Começar meu turno'} →</button><button type="button" class="text-button wide" data-tab="help">Consultar regras</button></section>`;
   }
 
+  function renderAverage(player) {
+    if (!player.purchases.length) return '<strong>— ainda sem compras</strong>';
+    const inside = R.inRange(player);
+    return `<strong class="avg-now ${inside ? 'inside' : 'outside'}">${points(R.average(player))} <span>${inside ? '✓ dentro da faixa' : '⚠ fora da faixa'}</span></strong>`;
+  }
+
   function renderPlayerCard(player, index) {
-    return `<div class="player-card ${index === state.turnIndex ? 'current' : ''}"><span class="player-number">${index === state.turnIndex ? 'VEZ ATUAL' : `PARTICIPANTE ${index + 1}`}</span><div class="player-top"><strong>${esc(player.name)}</strong><span>${R.balance(player)} moedas</span></div><p>${R.recipe(player).name} · ${player.purchases.length}/${R.recipe(player).ingredients.length} ingredientes</p>${player.finished ? `<p>${R.complete(player) ? '✓ Receita concluída' : 'Participação encerrada'}</p>` : ''}</div>`;
+    return `<div class="player-card ${index === state.turnIndex ? 'current' : ''}"><span class="player-number">${index === state.turnIndex ? 'VEZ ATUAL' : `PARTICIPANTE ${index + 1}`}</span><div class="player-top"><strong>${esc(player.name)}</strong><span>${R.balance(player)} moedas</span></div><p>${R.recipe(player).name} · ${player.purchases.length}/${R.recipe(player).ingredients.length} ingredientes</p><p>Qualidade média: <strong>${player.purchases.length ? points(R.average(player)) : '—'}</strong> · faixa ${number(player.estimateLow)}–${number(player.estimateHigh)}</p>${player.finished ? `<p>${R.complete(player) ? '✓ Receita concluída' : 'Participação encerrada'}</p>` : ''}</div>`;
   }
 
   function renderPlay() {
@@ -96,12 +112,11 @@
     const available = Object.entries(R.SOURCES).some(([id]) => !(state.currentEvent === 'indisponivel' && id === 'selected') && R.balance(player) >= R.eventCost(id, state.currentEvent));
     return `${progress(3)}<div class="game-layout"><aside class="panel game-sidebar"><h3 class="dashboard-label">A mesa</h3><p class="muted"><small>Rodada ${state.round} · Uma compra por turno</small></p><div class="player-list">${state.players.map(renderPlayerCard).join('')}</div></aside>
       <section class="panel"><div class="game-top"><div><span class="eyebrow">SUA VEZ · RODADA ${state.round}</span><h2>${esc(player.name)}</h2><p class="muted">${recipe.name} · Bônus +${number(recipe.bonus)} ao concluir</p></div><div class="balance"><small>SALDO DISPONÍVEL</small><strong>${R.balance(player)}</strong> <span>moedas</span></div></div>
-      <div class="planning-summary"><span>Seu gasto previsto<strong>${number(player.estimateCost)} moedas</strong></span><span>Sua faixa de qualidade média<strong>${number(player.estimateLow)} a ${number(player.estimateHigh)}</strong></span><span>Gasto até agora<strong>${R.spent(player)} moedas</strong></span></div>
+      <div class="planning-summary"><span>Seu gasto previsto<strong>${number(player.revisedEstimate ?? player.estimateCost)} moedas${player.revisedEstimate != null ? ' (revisado)' : ''}</strong></span><span>Gasto até agora<strong>${R.spent(player)} moedas</strong></span><span>Sua faixa de qualidade média<strong>${number(player.estimateLow)} a ${number(player.estimateHigh)}</strong></span><span>Qualidade média até agora${renderAverage(player)}</span></div>
       ${event ? `<article class="event-card"><div><span class="card-kicker">🂠 CARTA DE EVENTO · RODADA ${state.round}</span><h3>${event.name}</h3><p>${event.effect}</p><p class="event-concept"><strong>Na estimativa de custos:</strong> ${event.concept}</p></div></article>` : ''}
       ${state.currentEvent === 'escopo' && player.recipeId !== 'completo' && player.scopeRound !== state.round ? '<button type="button" data-action="expand-scope">Avaliar mudança de escopo →</button>' : ''}
       ${state.currentEvent === 'revisao' ? `<form id="revision-form" class="event-option"><label for="revision">Nova previsão de gasto (0 a 24 moedas)</label><input id="revision" type="number" min="0" max="24" step="1" required value="${player.revisedEstimate ?? player.estimateCost}"><button type="submit">Registrar revisão</button>${player.revisedEstimate != null ? `<small>Previsão revisada: ${number(player.revisedEstimate)} moedas. Original: ${number(player.estimateCost)}.</small>` : ''}</form>` : ''}
       ${state.currentEvent === 'inspecao' ? '<label class="event-option"><input id="inspect-option" type="checkbox"> Pagar 1 moeda para inspecionar a compra deste turno</label><p id="purchase-error" class="error" role="alert" hidden></p>' : ''}
-      ${state.currentEvent === 'otimista' ? '<label class="event-option"><input id="reroll-option" type="checkbox"> Rolar duas vezes e aceitar o segundo resultado</label>' : ''}
       <hr class="divider"><div class="section-heading"><h3>Escolha um ingrediente</h3><button type="button" class="text-button help-link" data-tab="help">Como funciona a qualidade?</button></div>
       <p class="muted"><small>A compra é confirmada antes do sorteio. Não há devolução nem substituição nesta versão.</small></p>
       <div class="ingredient-hand">${recipe.ingredients.map((ingredient, index) => {
@@ -118,15 +133,17 @@
     const best = R.score(ranked[0]);
     const winners = best === null ? [] : ranked.filter((player) => Math.abs(R.score(player) - best) < 1e-9 && R.complete(player));
     const title = winners.length ? `${winners.map((player) => esc(player.name)).join(' e ')} ${winners.length > 1 ? 'venceram!' : 'venceu!'}` : 'Hoje, a receita ficou pelo caminho.';
-    return `${progress(4)}<section class="score-hero"><span class="eyebrow">${winners.length > 1 ? 'EMPATE NA COZINHA' : 'CONTA FECHADA'}</span><h2>${title}</h2><p>${winners.length ? `Melhor pontuação: <strong>${points(best)}</strong> pontos. Agora comparem as decisões, não só o placar.` : 'Ninguém concluiu a receita. Comparem as compras e pensem em como ajustar o próximo planejamento.'}</p><div class="pills"><span class="pill">Pontuação = qualidade média + bônus</span><span class="pill">Só receitas completas entram na disputa</span></div></section>
+    return `${progress(4)}<section class="score-hero"><span class="eyebrow">${winners.length > 1 ? 'EMPATE NA COZINHA' : 'CONTA FECHADA'}</span><h2>${title}</h2><p>${winners.length ? `Melhor pontuação: <strong>${points(best)}</strong> pontos. Agora comparem as decisões, não só o placar.` : 'Ninguém concluiu a receita. Comparem as compras e pensem em como ajustar o próximo planejamento.'}</p><div class="pills"><span class="pill">Pontuação = qualidade média + bônus da receita + precisão do gasto + acerto da faixa</span><span class="pill">Só receitas completas entram na disputa</span></div></section>
       <div class="grid-two">${ranked.map((player) => {
         const completed = R.complete(player);
         const avg = R.average(player);
-        const inside = completed && avg >= player.estimateLow && avg <= player.estimateHigh;
+        const inside = completed && R.inRange(player);
+        const parts = R.scoreBreakdown(player);
         return `<article class="panel result-card"><header><div><span class="eyebrow">${completed ? '✓ RECEITA CONCLUÍDA' : 'RECEITA INCOMPLETA'}</span><h3>${esc(player.name)}</h3><small class="muted">${R.recipe(player).name} · ${player.purchases.length}/${R.recipe(player).ingredients.length} ingredientes</small></div><div class="result-score"><strong>${completed ? points(R.score(player)) : '—'}</strong><small>${completed ? 'pontos finais' : 'sem pontuação'}</small></div></header>
-        <div class="metrics"><div class="metric"><small>Gasto previsto → real</small><strong>${number(player.estimateCost)} → ${R.spent(player)} moedas</strong><p>${player.revisedEstimate != null ? `Previsão revisada: ${number(player.revisedEstimate)} moedas<br>` : ''}Diferença da previsão original: ${signed(R.spent(player) - player.estimateCost)} moedas<br>Saldo não usado: ${R.balance(player)}</p></div><div class="metric"><small>Faixa prevista → qualidade média ${completed ? 'real' : 'parcial'}</small><strong>${number(player.estimateLow)}–${number(player.estimateHigh)} → ${player.purchases.length ? points(avg) : '—'}</strong><p>${completed ? `${inside ? 'Dentro' : 'Fora'} da faixa prevista.<br>Bônus de receita: +${number(R.recipe(player).bonus)}` : 'Receita incompleta: sem bônus e sem comparação final da faixa.'}</p></div></div>
-        <ul class="history" aria-label="Histórico de compras de ${esc(player.name)}">${player.purchases.length ? player.purchases.map((item) => `<li><span>${item.ingredient} · ${R.SOURCES[item.sourceId].name}</span><span class="nowrap">${item.cost} moedas · Q ${item.quality}</span></li>`).join('') : '<li>Nenhuma compra realizada.</li>'}</ul></article>`;
-      }).join('')}</div><section class="panel" style="margin-top:24px"><span class="eyebrow">HISTÓRICO DA PARTIDA</span><h3>Eventos da mesa</h3><ol class="rules-list">${(state.eventHistory || []).map((entry) => `<li>Rodada ${entry.round}: ${R.EVENTS.find((item) => item.id === entry.id)?.name || 'Evento desconhecido'}</li>`).join('') || '<li>Nenhum evento registrado.</li>'}</ol></section><section class="panel" style="margin-top:24px"><span class="eyebrow">CONVERSA DEPOIS DA PARTIDA</span><h3>O que vocês fariam diferente?</h3><ul class="rules-list"><li>O gasto mudou em relação ao plano? Por quê?</li><li>Pagar mais pela qualidade mínima compensou nesta partida?</li><li>Uma boa decisão pode produzir um resultado ruim por acaso?</li><li>O bônus da receita maior compensou o uso do orçamento?</li></ul><div class="actions"><button type="button" class="primary" data-action="rematch">Jogar novamente com esta mesa</button><button type="button" data-action="reset">Configurar outra mesa</button><button type="button" class="text-button" data-tab="concepts">Relacionar com a disciplina ↗</button></div></section>`;
+        <div class="metrics"><div class="metric"><small>Gasto previsto → real</small><strong>${number(player.estimateCost)} → ${R.spent(player)} moedas</strong><p>${player.revisedEstimate != null ? `Previsão revisada: ${number(player.revisedEstimate)} moedas<br>` : ''}Diferença da previsão original: ${signed(R.spent(player) - player.estimateCost)} moedas<br>Saldo não usado: ${R.balance(player)}${parts ? `<br><strong>Precisão do gasto: ${signed(parts.cost)}</strong>` : ''}</p></div><div class="metric"><small>Faixa prevista → qualidade média ${completed ? 'real' : 'parcial'}</small><strong>${number(player.estimateLow)}–${number(player.estimateHigh)} → ${player.purchases.length ? points(avg) : '—'}</strong><p>${completed ? `${inside ? 'Dentro' : 'Fora'} da faixa prevista (largura ${number(player.estimateHigh - player.estimateLow)}).<br><strong>Acerto da faixa: ${signed(parts.range)}</strong>` : 'Receita incompleta: sem bônus e sem comparação final da faixa.'}</p></div></div>
+        ${parts ? `<p class="score-breakdown" aria-label="Composição da pontuação">Qualidade ${points(parts.quality)} <span>+</span> receita ${number(parts.recipe)} <span>${parts.cost < 0 ? '−' : '+'}</span> gasto ${number(Math.abs(parts.cost))} <span>${parts.range < 0 ? '−' : '+'}</span> faixa ${number(Math.abs(parts.range))} <span>=</span> <strong>${points(parts.total)}</strong></p>` : ''}
+        <ul class="history" aria-label="Histórico de compras de ${esc(player.name)}">${player.purchases.length ? player.purchases.map((item) => `<li><span>${item.ingredient} · ${R.SOURCES[item.sourceId].name}${item.rerolled ? ` · rolou de novo (antes ${item.firstQuality})` : ''}</span><span class="nowrap">${item.cost} moedas · Q ${item.quality}</span></li>`).join('') : '<li>Nenhuma compra realizada.</li>'}</ul></article>`;
+      }).join('')}</div><section class="panel" style="margin-top:24px"><span class="eyebrow">HISTÓRICO DA PARTIDA</span><h3>Eventos da mesa</h3><ol class="rules-list">${(state.eventHistory || []).map((entry) => `<li>Rodada ${entry.round}: ${R.EVENTS.find((item) => item.id === entry.id)?.name || 'Evento desconhecido'}</li>`).join('') || '<li>Nenhum evento registrado.</li>'}</ol></section><section class="panel" style="margin-top:24px"><span class="eyebrow">CONVERSA DEPOIS DA PARTIDA</span><h3>O que vocês fariam diferente?</h3><ul class="rules-list"><li>O gasto mudou em relação ao plano? Por quê?</li><li>Pagar mais pela qualidade mínima compensou nesta partida?</li><li>Uma boa decisão pode produzir um resultado ruim por acaso?</li><li>O bônus da receita maior compensou o uso do orçamento?</li><li>Valeu arriscar uma faixa de qualidade estreita? E quem errou a previsão de gasto, por quê errou?</li></ul><div class="actions"><button type="button" class="primary" data-action="rematch">Jogar novamente com esta mesa</button><button type="button" data-action="reset">Configurar outra mesa</button><button type="button" class="text-button" data-tab="concepts">Relacionar com a disciplina ↗</button></div></section>`;
   }
 
   const tutorial = [
@@ -134,16 +151,17 @@
     { title: 'Defina a entrega antes da compra.', text: 'Cada participante escolhe uma receita e registra o gasto previsto e a faixa de qualidade média esperada. Os ingredientes obrigatórios são o escopo da entrega.', example: 'O Clássico precisa de pão, carne, queijo e molho. Tudo econômico custa 12 moedas; tudo selecionado, 20.' },
     { title: 'Preço e qualidade podem mudar.', text: 'O preço básico da econômica é 3 moedas e o da selecionada é 5. Uma carta de evento é revelada a cada rodada e pode alterar preços, qualidade ou decisões.', example: 'Sem evento, econômica: dados 2 + 5 = qualidade 7. Selecionada: dado 2 + 6 = qualidade 8. A média esperada não é uma promessa.' },
     { title: 'Compre uma vez e passe a tela.', text: 'No seu turno, toque na procedência de um ingrediente e confirme. Veja os dados e passe a vez. Participantes que concluíram ou encerraram deixam de receber turnos.', example: 'Ana compra o pão. Bruno compra a carne. Depois, a vez volta a Ana. Não é possível comprar de novo o mesmo ingrediente.' },
-    { title: 'Feche a receita e compare.', text: 'Receita completa: some a qualidade dos ingredientes, divida pela quantidade e adicione o bônus. Vence a maior pontuação. Pontuações exatamente iguais empatam; saldo não desempata.', example: 'Clássico com qualidades 7, 8, 9 e 10: média 8,5 + bônus 0 = 8,5 pontos. Depois, compare gasto e faixa previstos com o resultado real.' }
+    { title: 'Feche a receita e acerte a previsão.', text: 'Receita completa: qualidade média + bônus da receita + precisão do gasto + acerto da faixa. Acertar o gasto em cheio vale +2; cada moeda de diferença tira 1 ponto, até −2. Se a média ficar dentro da faixa, você ganha 3 menos 0,5 por ponto de largura; se ficar fora, perde 1. Vence a maior pontuação; saldo não desempata.', example: 'Clássico com qualidades 7, 8, 9 e 10 (média 8,5), gasto previsto 16 e real 16 (+2), faixa 8 a 9 (+2,5): 8,5 + 0 + 2 + 2,5 = 13 pontos. Com a faixa segura 6 a 12, o acerto valeria 0.' }
   ];
 
   function renderHelp() {
     const step = tutorial[tutorialStep];
     return `<div class="section-heading"><div><span class="eyebrow">AJUDA SEM SAIR DA PARTIDA</span><h2>Regras e tutorial</h2></div><button type="button" data-tab="game">← Voltar ao jogo</button></div><p class="muted">Seu progresso é mantido ao trocar de aba. Você pode consultar esta página a qualquer momento.</p>
       <div class="grid-two"><section class="panel tutorial-box"><div class="tutorial-count">TUTORIAL · ${tutorialStep + 1} DE ${tutorial.length}</div><h3>${step.title}</h3><p>${step.text}</p><p class="note">${step.example}</p><div class="tutorial-controls"><button type="button" data-action="tutorial-back" ${tutorialStep === 0 ? 'disabled' : ''}>← Anterior</button><div class="tutorial-dots" aria-hidden="true">${tutorial.map((_, index) => `<span class="${index === tutorialStep ? 'active' : ''}"></span>`).join('')}</div>${tutorialStep === tutorial.length - 1 ? '<button type="button" class="primary" data-tab="game">Vamos jogar →</button>' : '<button type="button" class="primary" data-action="tutorial-next">Próximo →</button>'}</div></section>
-      <section class="panel"><h3>Resumo da mesa</h3><ul class="rules-list"><li>De 2 a 6 jogadores ou equipes, por turnos.</li><li>24 moedas para cada participante. Não há empréstimos.</li><li>Uma compra por turno. Todos podem escolher a mesma receita.</li><li>Compra confirmada não tem devolução nem substituição.</li><li>Quem conclui a receita deixa de comprar. Quem fica com menos de 3 moedas sem concluir é encerrado automaticamente.</li><li>Também é possível encerrar voluntariamente, sem pontuação se a receita estiver incompleta.</li><li>Vence a maior pontuação entre receitas completas. Empates são compartilhados.</li></ul></section></div>
+      <section class="panel"><h3>Resumo da mesa</h3><ul class="rules-list"><li>De 2 a 6 jogadores ou equipes, por turnos.</li><li>24 moedas para cada participante. Não há empréstimos.</li><li>Uma compra por turno. Todos podem escolher a mesma receita.</li><li>Compra confirmada não tem devolução nem substituição.</li><li>Quem conclui a receita deixa de comprar. Quem fica com menos de 3 moedas sem concluir é encerrado automaticamente.</li><li>Também é possível encerrar voluntariamente, sem pontuação se a receita estiver incompleta.</li><li>Vence a maior pontuação entre receitas completas. Empates são compartilhados.</li><li>A estimativa conta: precisão do gasto de −2 a +2 e faixa de qualidade de −1 a +3 (mais estreita paga mais).</li></ul></section></div>
       <section class="panel" style="margin-top:24px"><h3>As duas procedências</h3><div class="table-wrap"><table><caption class="sr-only">Preços e distribuições de qualidade</caption><thead><tr><th>Procedência</th><th>Custo</th><th>Sorteio</th><th>Faixa</th><th>Média esperada</th></tr></thead><tbody><tr><td>Econômica</td><td>3 moedas</td><td>2 dados de 6 faces</td><td>2–12</td><td>7</td></tr><tr><td>Selecionada</td><td>5 moedas</td><td>1 dado de 6 faces + 6</td><td>7–12</td><td>9,5</td></tr></tbody></table></div><p class="muted"><small>Dados justos e independentes. Na econômica, somas próximas de 7 são mais prováveis do que 2 ou 12. A selecionada tem qualidade mínima maior, mas não garante superar toda compra econômica.</small></p>
-      <h3>Receitas e pontuação</h3><div class="table-wrap"><table><caption class="sr-only">Ingredientes e bônus de cada receita</caption><thead><tr><th>Receita</th><th>Ingredientes obrigatórios</th><th>Bônus</th></tr></thead><tbody>${R.RECIPES.map((item) => `<tr><td>${item.name}</td><td>${item.ingredients.join(', ')}</td><td>+${number(item.bonus)}</td></tr>`).join('')}</tbody></table></div><p class="note"><strong>Pontuação = (soma da qualidade ÷ quantidade de ingredientes) + bônus.</strong> O placar é exibido com até duas casas decimais, mas comparado sem arredondamento. Bônus são valores iniciais de teste, não uma medida universal de valor.</p></section>`;
+      <h3>Receitas e pontuação</h3><div class="table-wrap"><table><caption class="sr-only">Ingredientes e bônus de cada receita</caption><thead><tr><th>Receita</th><th>Ingredientes obrigatórios</th><th>Bônus</th></tr></thead><tbody>${R.RECIPES.map((item) => `<tr><td>${item.name}</td><td>${item.ingredients.join(', ')}</td><td>+${number(item.bonus)}</td></tr>`).join('')}</tbody></table></div><h3>Pontos da estimativa</h3><div class="table-wrap"><table><caption class="sr-only">Pontos da estimativa de gasto e de qualidade</caption><thead><tr><th>Previsão</th><th>Como pontua</th><th>Exemplos</th></tr></thead><tbody><tr><td>Gasto</td><td>+2 menos 1 por moeda de diferença, mínimo −2. Uma revisão de estimativa vale no máximo +1 e nunca piora a previsão original.</td><td>Diferença 0: +2 · 1: +1 · 2: 0 · 4 ou mais: −2</td></tr><tr><td>Faixa de qualidade média</td><td>Dentro: 3 − 0,5 × largura (mínimo 0). Fora: −1.</td><td>8–8: +3 · 8–9: +2,5 · 7–10: +1,5 · 6–12: 0</td></tr></tbody></table></div>
+      <p class="note"><strong>Pontuação = (soma da qualidade ÷ quantidade de ingredientes) + bônus da receita + precisão do gasto + acerto da faixa.</strong> O placar é exibido com até duas casas decimais, mas comparado sem arredondamento. Bônus são valores iniciais de teste, não uma medida universal de valor.</p></section>`;
   }
 
   function renderConcepts() {
@@ -151,7 +169,7 @@
       <div class="grid-two"><article class="panel"><h3>Escopo, tamanho e custo</h3><p>A receita define o que deve ser entregue. Mais ingredientes exigem mais recursos, mas contar ingredientes <strong>não equivale</strong> a medir pontos de função ou linhas de código.</p><p class="note">Pergunta para a mesa: duas entregas do mesmo tamanho necessariamente têm o mesmo custo?</p></article>
       <article class="panel"><h3>Estimativa ≠ orçamento ≠ resultado</h3><p><strong>Estimativa</strong> é sua previsão. <strong>Orçamento</strong> é o limite de 24 moedas. <strong>Resultado</strong> é o que foi gasto e entregue. O gasto real pode diferir da previsão se as escolhas de compra mudarem.</p><p class="note">Os preços básicos são conhecidos, mas cartas de evento podem alterá-los. O sorteio dos dados afeta a qualidade.</p></article>
       <article class="panel"><h3>Risco e incerteza</h3><p>Uma faixa expressa resultados possíveis ou esperados; não promete um valor específico. A procedência selecionada eleva o mínimo de qualidade. A econômica economiza recursos com maior variabilidade.</p><p>Em software, o risco também pode vir de requisitos instáveis, tecnologia, experiência e comunicação. Os dados são uma simplificação desses fatores.</p></article>
-      <article class="panel"><h3>Qualidade e valor</h3><p>A qualidade é o desempenho dos ingredientes. A pontuação mistura qualidade média com um bônus definido pelas regras para a complexidade da receita.</p><p>Saldo restante não dá pontos. O bônus precisa ser calibrado em partidas de teste: se for excessivo ou insuficiente, uma receita pode dominar as escolhas.</p></article>
+      <article class="panel"><h3>Qualidade e valor</h3><p>A qualidade é o desempenho dos ingredientes. A pontuação mistura qualidade média, um bônus pela complexidade da receita e a <strong>qualidade da própria estimativa</strong>: acertar o gasto e apostar numa faixa estreita rendem pontos; uma faixa larga é segura, mas pouco informativa.</p><p>Saldo restante não dá pontos. O bônus precisa ser calibrado em partidas de teste: se for excessivo ou insuficiente, uma receita pode dominar as escolhas.</p></article>
       <article class="panel"><h3>Comparar para aprender</h3><p>Depois da partida, comparem gasto previsto e real, faixa esperada e qualidade obtida. Um sorteio isolado não prova que a estratégia era boa ou ruim. Repitam partidas e discutam os padrões.</p><p class="note">Objetivo: justificar escolhas considerando escopo, orçamento, custo, risco, qualidade e benefício esperado.</p></article>
       <article class="panel"><h3>O que este protótipo não representa</h3><p>Não há estimativa de horas, duração, produtividade, métodos formais de medição de software ou acompanhamento de marcos.</p><p>Também <strong>não implementa Análise de Valor Agregado formal</strong>: faltam valor planejado, valor agregado e custo real acompanhados ao longo do tempo.</p></article></div>
       <section class="panel" style="margin-top:24px"><h3>Referências da proposta</h3><p class="muted">As mecânicas são analogias didáticas inspiradas na discussão apresentada. Os links abaixo abrem fontes externas e precisam de internet.</p><ul class="reference-list"><li><a href="https://www.mheducation.com/highered/mhp/product/practical-software-project-estimation-toolkit-estimating-software-development-effort-duration.html" target="_blank" rel="noopener noreferrer">Hill — Practical Software Project Estimation</a></li><li><a href="https://www.mheducation.com/highered/mhp/product/estimating-software-costs.html" target="_blank" rel="noopener noreferrer">Jones — Estimating Software Costs</a></li><li><a href="https://www.microsoftpressstore.com/articles/article.aspx?p=2191414" target="_blank" rel="noopener noreferrer">McConnell — discussão sobre estimativas</a></li><li><a href="https://repositorio.ufc.br/handle/riufc/49759" target="_blank" rel="noopener noreferrer">Braga — fatores que afetam estimativas de esforço</a></li><li><a href="https://ricardo-vargas.com/pt/books/analise-de-valor-agregado-em-projetos-5a-edicao/" target="_blank" rel="noopener noreferrer">Vargas — Análise de Valor Agregado em Projetos</a></li></ul></section>`;
@@ -219,6 +237,7 @@
   }
 
   function closeDialog() {
+    clearInterval(rollTimer);
     dialog.close();
     dialogKind = null;
     confirmAction = null;
@@ -231,15 +250,43 @@
     dialog.showModal();
   }
 
+  function diceMarkup(dice, selected) {
+    return `${dice.map((die) => `<span class="die" aria-hidden="true">${die}</span>`).join('<span aria-hidden="true">+</span>')}${selected ? '<span aria-hidden="true">+ 6</span>' : ''}`;
+  }
+
   function showResult() {
     const player = state.players[state.pendingResult.playerIndex];
     const purchase = player.purchases[state.pendingResult.purchaseIndex];
     const selected = purchase.sourceId === 'selected';
+    const canReroll = !!state.pendingResult.canReroll;
+    const animate = animateRoll && !reducedMotion();
+    animateRoll = false;
+    clearInterval(rollTimer);
     dialogKind = 'result';
     confirmAction = null;
-    dialogContent.innerHTML = `<span class="eyebrow">COMPRA REALIZADA · ${esc(player.name)}</span><h2 id="dialog-title">${purchase.ingredient} na conta!</h2><p class="muted">${R.SOURCES[purchase.sourceId].name} · ${purchase.cost} moedas gastas</p><div class="dice" role="img" aria-label="${selected ? `Dado ${purchase.dice[0]}, mais 6` : `Dados ${purchase.dice.join(' e ')}`}">${purchase.dice.map((die) => `<span class="die" aria-hidden="true">${die}</span>`).join('<span aria-hidden="true">+</span>')}${selected ? '<span aria-hidden="true">+ 6</span>' : ''}</div>${purchase.adjustment ? `<p class="roll-label">Ajuste do evento: ${signed(purchase.adjustment)}</p>` : ''}<p class="roll-quality">${purchase.quality}</p><p class="roll-label">pontos de qualidade</p><p class="note">${R.complete(player) ? 'Receita concluída! Sua pontuação será comparada quando todos terminarem.' : player.finished ? 'Seu saldo não permite outra compra. A receita ficou incompleta e sua participação foi encerrada.' : `Saldo: ${R.balance(player)} moedas. Faltam ${R.remaining(player).length} ingredientes para concluir.`}</p><button type="button" class="primary wide" data-action="continue-result" autofocus>${state.players.every((item) => item.finished) ? 'Ver resultados' : 'Passar a vez'} →</button>`;
-    dialog.showModal();
-    announce(`Compra realizada: ${purchase.ingredient}, qualidade ${purchase.quality}, saldo ${R.balance(player)} moedas.`);
+    const status = R.complete(player) ? 'Receita concluída! Sua pontuação será comparada quando todos terminarem.' : player.finished ? 'Seu saldo não permite outra compra. A receita ficou incompleta e sua participação foi encerrada.' : `Saldo: ${R.balance(player)} moedas. Faltam ${R.remaining(player).length} ingredientes para concluir.`;
+    const actions = canReroll
+      ? `<p class="note"><strong>Estimativa otimista:</strong> quer rolar de novo? Se rolar, fica obrigatoriamente com o novo resultado, mesmo que seja pior.</p><div class="actions"><button type="button" class="accent" data-action="reroll" data-roll-lock>🎲 Rolar de novo</button><button type="button" class="primary" data-action="keep-roll" data-roll-lock autofocus>Ficar com ${purchase.quality}</button></div>`
+      : `<p class="note">${status}</p><button type="button" class="primary wide" data-action="continue-result" data-roll-lock autofocus>${state.players.every((item) => item.finished) ? 'Ver resultados' : 'Passar a vez'} →</button>`;
+    dialogContent.innerHTML = `<span class="eyebrow">COMPRA REALIZADA · ${esc(player.name)}</span><h2 id="dialog-title">${purchase.ingredient} na conta!</h2><p class="muted">${R.SOURCES[purchase.sourceId].name} · ${purchase.cost} moedas gastas</p>${purchase.rerolled ? `<p class="roll-label">Primeira rolagem: ${purchase.firstDice.join(' + ')}${selected ? ' + 6' : ''} → ${purchase.firstQuality}. Ficou valendo a segunda.</p>` : ''}<div class="dice ${animate ? 'rolling' : ''}" role="img" aria-label="${selected ? `Dado ${purchase.dice[0]}, mais 6` : `Dados ${purchase.dice.join(' e ')}`}">${diceMarkup(animate ? purchase.dice.map(() => '?') : purchase.dice, selected)}</div><div class="roll-reveal ${animate ? 'pending' : ''}">${purchase.adjustment ? `<p class="roll-label">Ajuste do evento: ${signed(purchase.adjustment)}</p>` : ''}<p class="roll-quality">${purchase.quality}</p><p class="roll-label">pontos de qualidade · média atual ${points(R.average(player))} (faixa ${number(player.estimateLow)}–${number(player.estimateHigh)})</p></div>${actions}`;
+    if (!dialog.open) dialog.showModal();
+    const finish = () => {
+      const diceBox = dialogContent.querySelector('.dice');
+      if (diceBox) { diceBox.classList.remove('rolling'); diceBox.innerHTML = diceMarkup(purchase.dice, selected); }
+      dialogContent.querySelector('.roll-reveal')?.classList.remove('pending');
+      dialogContent.querySelectorAll('[data-roll-lock]').forEach((button) => { button.disabled = false; });
+      dialogContent.querySelector('[autofocus]')?.focus();
+      announce(`Compra realizada: ${purchase.ingredient}, qualidade ${purchase.quality}, saldo ${R.balance(player)} moedas.${canReroll ? ' Você pode rolar de novo ou ficar com este resultado.' : ''}`);
+    };
+    if (!animate) return finish();
+    dialogContent.querySelectorAll('[data-roll-lock]').forEach((button) => { button.disabled = true; });
+    const faces = [...dialogContent.querySelectorAll('.die')];
+    let ticks = 0;
+    rollTimer = setInterval(() => {
+      ticks++;
+      faces.forEach((face) => { face.textContent = String(1 + ((ticks * 7 + faces.indexOf(face) * 3) % 6)); });
+      if (ticks >= 10) { clearInterval(rollTimer); finish(); }
+    }, 80);
   }
 
   function requestPurchase(index, sourceId) {
@@ -248,7 +295,6 @@
     const ingredient = R.recipe(player).ingredients[index];
     const source = R.SOURCES[sourceId];
     const inspect = state.currentEvent === 'inspecao' && !!document.querySelector('#inspect-option')?.checked;
-    const reroll = state.currentEvent === 'otimista' && !!document.querySelector('#reroll-option')?.checked;
     const cost = source ? R.eventCost(sourceId, state.currentEvent) + (inspect ? 1 : 0) : 0;
     if (!ingredient || !source || !R.remaining(player).includes(ingredient) || R.balance(player) < cost || player.finished || (state.currentEvent === 'indisponivel' && sourceId === 'selected')) {
       if (source && inspect && R.balance(player) < cost) { const error = document.querySelector('#purchase-error'); error.textContent = 'Saldo insuficiente para esta compra com inspeção. Desmarque a inspeção ou escolha outra carta.'; error.hidden = false; }
@@ -256,9 +302,11 @@
     }
     const newBalance = R.balance(player) - cost;
     const minRemaining = (R.remaining(player).length - 1) * R.SOURCES.economical.cost;
-    confirm(`Comprar ${ingredient.toLowerCase()}?`, `<p><strong>${source.name}</strong> · ${cost} moedas${inspect ? ' (inclui inspeção)' : ''}<br>Qualidade base sorteada: ${source.min} a ${source.max}${reroll ? ' · segundo sorteio obrigatório' : ''}.</p><p>Seu saldo após a compra: <strong>${newBalance} moedas.</strong></p>${newBalance < minRemaining ? `<p class="note warning">Atenção: pelo preço normal econômico, os ingredientes restantes custam ${minRemaining} moedas. Eventos futuros podem alterar esse valor.</p>` : ''}<p class="muted"><small>A qualidade só é revelada após a confirmação. Esta compra não pode ser desfeita.</small></p>`, 'Confirmar e sortear', () => {
-      R.buy(player, ingredient, sourceId, Math.random, { eventId: state.currentEvent, inspect, reroll });
+    confirm(`Comprar ${ingredient.toLowerCase()}?`, `<p><strong>${source.name}</strong> · ${cost} moedas${inspect ? ' (inclui inspeção)' : ''}<br>Qualidade base sorteada: ${source.min} a ${source.max}${state.currentEvent === 'otimista' ? ' · depois você pode rolar de novo' : ''}.</p><p>Seu saldo após a compra: <strong>${newBalance} moedas.</strong></p>${newBalance < minRemaining ? `<p class="note warning">Atenção: pelo preço normal econômico, os ingredientes restantes custam ${minRemaining} moedas. Eventos futuros podem alterar esse valor.</p>` : ''}<p class="muted"><small>A qualidade só é revelada após a confirmação. Esta compra não pode ser desfeita.</small></p>`, 'Confirmar e sortear', () => {
+      R.buy(player, ingredient, sourceId, Math.random, { eventId: state.currentEvent, inspect });
       state.pendingResult = { playerIndex: state.turnIndex, purchaseIndex: player.purchases.length - 1 };
+      if (state.currentEvent === 'otimista') state.pendingResult.canReroll = true;
+      animateRoll = true;
       save();
       render();
     });
@@ -327,8 +375,21 @@
         action(); break;
       }
       case 'cancel-dialog': closeDialog(); break;
+      case 'reroll': {
+        if (!state.pendingResult?.canReroll) return;
+        const player = state.players[state.pendingResult.playerIndex];
+        R.rerollLast(player, Math.random);
+        player.finished = R.complete(player) || R.balance(player) < R.SOURCES.economical.cost;
+        state.pendingResult.canReroll = false;
+        animateRoll = true;
+        save(); render(); showResult(); break;
+      }
+      case 'keep-roll':
+        if (!state.pendingResult?.canReroll) return;
+        state.pendingResult.canReroll = false;
+        save(); render(); showResult(); break;
       case 'continue-result':
-        if (!state.pendingResult) return;
+        if (!state.pendingResult || state.pendingResult.canReroll) return;
         closeDialog(); advanceTurn(); break;
       case 'finish-player':
         confirm('Encerrar sua participação?', '<p>Se sua receita estiver incompleta, você ficará <strong>sem pontuação</strong>. As compras serão mantidas para a comparação final. Os outros participantes continuam jogando.</p>', 'Encerrar participação', () => {
@@ -347,7 +408,11 @@
     if (event.target.closest('#setup-form')) { syncSetup(); save(); }
     if (event.target.closest('#planning-form')) {
       const plan = readPlan();
-      if (plan) { Object.assign(state.players[state.planningIndex], plan); save(); }
+      if (plan) {
+        Object.assign(state.players[state.planningIndex], plan); save();
+        const stakes = document.querySelector('#estimate-stakes');
+        if (stakes) stakes.innerHTML = renderStakes(state.players[state.planningIndex]);
+      }
     }
   });
 

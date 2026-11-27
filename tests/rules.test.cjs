@@ -4,7 +4,8 @@ const R = require('../rules.js');
 
 test('baralho percorre todos os eventos sem repetição e salva histórico', () => {
   const state = R.newState();
-  for (let round = 1; round <= R.EVENTS.length; round++) {
+  R.buy(state.players[0], 'Pão', 'economical', () => 0);
+  for (let round = 2; round <= R.EVENTS.length + 1; round++) {
     state.round = round;
     R.drawEvent(state, () => 0.5);
     assert.ok(R.validState(state));
@@ -36,6 +37,7 @@ test('eventos alteram preços, disponibilidade e qualidade sem ultrapassar o or�
 test('defeito afeta o último ingrediente e preserva validação do sorteio', () => {
   const state = R.newState();
   R.buy(state.players[0], 'Pão', 'selected', () => 0);
+  state.round = 2;
   state.eventDeck = ['defeito'];
   R.drawEvent(state);
   assert.equal(state.players[0].purchases[0].quality, 6);
@@ -92,7 +94,10 @@ test('todas as receitas são possíveis dentro do orçamento e recebem bônus co
     assert.ok(R.complete(player));
     assert.ok(player.finished);
     assert.equal(R.average(player), 2);
-    assert.equal(R.score(player), 2 + recipe.bonus);
+    const parts = R.scoreBreakdown(player);
+    assert.equal(parts.recipe, recipe.bonus);
+    assert.equal(parts.range, R.SCORING.rangeMiss);
+    assert.equal(R.score(player), 2 + recipe.bonus + parts.cost + parts.range);
     assert.ok(R.balance(player) >= 0);
     assert.throws(() => R.buy(player, 'Pão', 'economical'));
   }
@@ -213,4 +218,92 @@ test('partida completa com seis pessoas termina e conserva cada orçamento', () 
   }
   assert.equal(moves, 30);
   assert.ok(players.every((player) => R.complete(player) && R.balance(player) >= 0));
+});
+
+test('primeira rodada não revela eventos que dependem de compras anteriores', () => {
+  const state = R.newState();
+  state.eventDeck = R.EVENTS.map((event) => event.id).filter((id) => id !== 'defeito' && id !== 'revisao').concat(['revisao', 'defeito']);
+  R.drawEvent(state);
+  assert.ok(!['defeito', 'revisao'].includes(state.currentEvent));
+  assert.ok(state.eventDeck.includes('defeito') && state.eventDeck.includes('revisao'), 'cartas puladas continuam no baralho');
+  assert.ok(R.validState(state));
+  state.eventDeck = ['defeito', 'revisao'];
+  R.drawEvent(state);
+  assert.ok(!['defeito', 'revisao'].includes(state.currentEvent), 'baralho só com cartas inválidas é renovado');
+  assert.ok(R.validState(state));
+  R.buy(state.players[0], 'Pão', 'economical', () => 0);
+  state.round = 2;
+  state.eventDeck = ['defeito'];
+  R.drawEvent(state);
+  assert.equal(state.currentEvent, 'defeito');
+});
+
+test('mudança de escopo não aparece quando todos já fazem o Completo', () => {
+  const state = R.newState();
+  state.players.forEach((player) => { player.recipeId = 'completo'; });
+  assert.equal(R.eventApplicable('escopo', state), false);
+  state.players[1].recipeId = 'classico';
+  assert.equal(R.eventApplicable('escopo', state), true);
+});
+
+test('precisão do gasto pontua de +2 a −2 e a revisão vale no máximo +1', () => {
+  const player = R.newPlayer(0);
+  R.recipe(player).ingredients.forEach((name) => R.buy(player, name, 'economical', () => 0));
+  assert.equal(R.spent(player), 12);
+  const cost = (estimate, revised) => R.costScore({ ...player, estimateCost: estimate, revisedEstimate: revised });
+  assert.equal(cost(12), 2);
+  assert.equal(cost(13), 1);
+  assert.equal(cost(10), 0);
+  assert.equal(cost(15), -1);
+  assert.equal(cost(20), -2);
+  assert.equal(cost(20, 12), 1);
+  assert.equal(cost(12, 20), 2, 'revisão ruim não apaga uma previsão original boa');
+});
+
+test('faixa de qualidade mais estreita paga mais e errar a faixa tira ponto', () => {
+  assert.equal(R.rangeReward(8, 8), 3);
+  assert.equal(R.rangeReward(8, 9), 2.5);
+  assert.equal(R.rangeReward(7, 10), 1.5);
+  assert.equal(R.rangeReward(6, 12), 0);
+  assert.equal(R.rangeReward(2, 12), 0);
+  const player = { ...R.newPlayer(0), estimateCost: 12, estimateLow: 6.5, estimateHigh: 7.5 };
+  R.recipe(player).ingredients.forEach((name) => R.buy(player, name, 'economical', () => .5));
+  assert.equal(R.average(player), 8);
+  assert.equal(R.rangeScore(player), R.SCORING.rangeMiss);
+  player.estimateHigh = 8;
+  assert.equal(R.rangeScore(player), 2.25);
+  assert.deepEqual(R.scoreBreakdown(player), { quality: 8, recipe: 0, cost: 2, range: 2.25, total: 12.25 });
+});
+
+test('estimativa otimista: rola uma vez, decide e só pode rolar de novo uma vez', () => {
+  const state = R.newState();
+  state.phase = 'play';
+  state.currentEvent = 'otimista';
+  const player = state.players[0];
+  R.buy(player, 'Pão', 'economical', () => 0, { eventId: 'otimista' });
+  assert.equal(player.purchases[0].quality, 2);
+  state.pendingResult = { playerIndex: 0, purchaseIndex: 0, canReroll: true };
+  assert.ok(R.validState(JSON.parse(JSON.stringify(state))));
+  R.rerollLast(player, () => .99999);
+  assert.deepEqual(player.purchases[0].dice, [6, 6]);
+  assert.deepEqual(player.purchases[0].firstDice, [1, 1]);
+  assert.equal(player.purchases[0].quality, 12);
+  assert.throws(() => R.rerollLast(player));
+  state.pendingResult.canReroll = false;
+  assert.ok(R.validState(JSON.parse(JSON.stringify(state))));
+  state.currentEvent = 'promocao';
+  state.pendingResult.canReroll = true;
+  assert.equal(R.validState(state), false);
+});
+
+test('nova rolagem mantém os ajustes do evento da compra', () => {
+  const player = R.newPlayer(0);
+  R.buy(player, 'Pão', 'economical', () => .5, { eventId: 'lote' });
+  assert.equal(player.purchases[0].quality, 7);
+  R.rerollLast(player, () => 0);
+  assert.equal(player.purchases[0].quality, 2);
+  assert.equal(player.purchases[0].adjustment, 0);
+  const state = R.newState();
+  state.players[0] = player;
+  assert.ok(R.validState(state));
 });
