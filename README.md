@@ -35,7 +35,7 @@ O formato implementado é competitivo. Não há rede, adversários automáticos 
 - Especial: Clássico + alface; bônus 0,5.
 - Completo: Especial + tomate; bônus 1.
 - Pontuação: **qualidade média + bônus**, apenas para receita completa.
-- Há um baralho de eventos: uma carta global é revelada por rodada e fica visível na mesa. Ao esgotar o baralho, ele é embaralhado novamente. Eventos podem alterar preços, qualidade e disponibilidade, ou oferecer decisões de escopo, inspeção e revisão de estimativa. A revisão preserva a previsão original no resultado.
+- Há um baralho de eventos: uma carta global é revelada por rodada e fica visível na mesa. Ao esgotar o baralho, ele é embaralhado novamente. Cartas que dependem de compras anteriores (Ingrediente defeituoso, Revisão de estimativa) não saem na primeira rodada nem antes de alguém comprar; Mudança de escopo não sai se todos já fazem o Completo. Essas cartas continuam no baralho para uma rodada futura. Eventos podem alterar preços, qualidade e disponibilidade, ou oferecer decisões de escopo, inspeção e revisão de estimativa. A revisão preserva a previsão original no resultado.
 - Não há substituições, devoluções, empréstimos ou pontos por saldo. Um jogador sem compra disponível devido ao evento pode passar a vez.
 - A classificação usa valores não arredondados; a exibição usa até duas casas decimais.
 - Os bônus são hipóteses de equilíbrio e devem ser avaliados com partidas reais.

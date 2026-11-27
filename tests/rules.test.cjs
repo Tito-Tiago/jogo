@@ -4,7 +4,8 @@ const R = require('../rules.js');
 
 test('baralho percorre todos os eventos sem repetição e salva histórico', () => {
   const state = R.newState();
-  for (let round = 1; round <= R.EVENTS.length; round++) {
+  R.buy(state.players[0], 'Pão', 'economical', () => 0);
+  for (let round = 2; round <= R.EVENTS.length + 1; round++) {
     state.round = round;
     R.drawEvent(state, () => 0.5);
     assert.ok(R.validState(state));
@@ -36,6 +37,7 @@ test('eventos alteram preços, disponibilidade e qualidade sem ultrapassar o or�
 test('defeito afeta o último ingrediente e preserva validação do sorteio', () => {
   const state = R.newState();
   R.buy(state.players[0], 'Pão', 'selected', () => 0);
+  state.round = 2;
   state.eventDeck = ['defeito'];
   R.drawEvent(state);
   assert.equal(state.players[0].purchases[0].quality, 6);
@@ -213,4 +215,30 @@ test('partida completa com seis pessoas termina e conserva cada orçamento', () 
   }
   assert.equal(moves, 30);
   assert.ok(players.every((player) => R.complete(player) && R.balance(player) >= 0));
+});
+
+test('primeira rodada não revela eventos que dependem de compras anteriores', () => {
+  const state = R.newState();
+  state.eventDeck = R.EVENTS.map((event) => event.id).filter((id) => id !== 'defeito' && id !== 'revisao').concat(['revisao', 'defeito']);
+  R.drawEvent(state);
+  assert.ok(!['defeito', 'revisao'].includes(state.currentEvent));
+  assert.ok(state.eventDeck.includes('defeito') && state.eventDeck.includes('revisao'), 'cartas puladas continuam no baralho');
+  assert.ok(R.validState(state));
+  state.eventDeck = ['defeito', 'revisao'];
+  R.drawEvent(state);
+  assert.ok(!['defeito', 'revisao'].includes(state.currentEvent), 'baralho só com cartas inválidas é renovado');
+  assert.ok(R.validState(state));
+  R.buy(state.players[0], 'Pão', 'economical', () => 0);
+  state.round = 2;
+  state.eventDeck = ['defeito'];
+  R.drawEvent(state);
+  assert.equal(state.currentEvent, 'defeito');
+});
+
+test('mudança de escopo não aparece quando todos já fazem o Completo', () => {
+  const state = R.newState();
+  state.players.forEach((player) => { player.recipeId = 'completo'; });
+  assert.equal(R.eventApplicable('escopo', state), false);
+  state.players[1].recipeId = 'classico';
+  assert.equal(R.eventApplicable('escopo', state), true);
 });

@@ -22,16 +22,32 @@
     { id: 'lote', name: 'Lote de qualidade duvidosa', effect: 'Compras econômicas perdem 1 ponto de qualidade, até o mínimo de 2.', concept: 'O preço de aquisição não é o único fator na avaliação de qualidade.' },
     { id: 'revisao', name: 'Revisão de estimativa', effect: 'Você pode registrar uma nova previsão de gasto antes de comprar.', concept: 'Reestimar usa novas informações sem apagar a previsão original.' }
   ];
+  // Eventos que só fazem sentido depois que alguém já comprou algo.
+  const EVENT_REQUIRES_PURCHASE = new Set(['defeito', 'revisao']);
+  function eventApplicable(eventId, state) {
+    const active = state.players.filter((player) => !player.finished);
+    if (EVENT_REQUIRES_PURCHASE.has(eventId) && (state.round < 2 || !active.some((player) => player.purchases.length))) return false;
+    if (eventId === 'escopo' && !active.some((player) => player.recipeId !== 'completo')) return false;
+    return true;
+  }
   const eventCost = (sourceId, eventId) => Math.max(1, SOURCES[sourceId].cost + (eventId === 'inflacao' && sourceId === 'economical' ? 1 : 0) - (eventId === 'promocao' || (eventId === 'negociacao' && sourceId === 'selected') ? 1 : 0));
-  function drawEvent(state, random = Math.random) {
-    if (!state.eventDeck || !state.eventDeck.length) {
-      state.eventDeck = EVENTS.map((event) => event.id);
-      for (let i = state.eventDeck.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [state.eventDeck[i], state.eventDeck[j]] = [state.eventDeck[j], state.eventDeck[i]];
-      }
+  function shuffledDeck(random) {
+    const deck = EVENTS.map((event) => event.id);
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
     }
-    state.currentEvent = state.eventDeck.pop();
+    return deck;
+  }
+  function drawEvent(state, random = Math.random) {
+    if (!state.eventDeck || !state.eventDeck.length) state.eventDeck = shuffledDeck(random);
+    // Cartas que não fazem sentido agora continuam no baralho para uma rodada futura.
+    let index = state.eventDeck.findLastIndex((id) => eventApplicable(id, state));
+    if (index === -1) {
+      state.eventDeck = shuffledDeck(random);
+      index = state.eventDeck.findLastIndex((id) => eventApplicable(id, state));
+    }
+    state.currentEvent = state.eventDeck.splice(index, 1)[0];
     state.eventHistory = state.eventHistory || [];
     state.eventHistory.push({ round: state.round, id: state.currentEvent });
     if (state.currentEvent === 'defeito') state.players.forEach((player) => {
@@ -114,7 +130,7 @@
     if (state.phase === 'results' && !state.players.every((player) => player.finished)) return false;
     return true;
   }
-  const api = { BUDGET, RECIPES, SOURCES, EVENTS, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, score, roll, buy, nextPlayer, ranking, newPlayer, newState, validState };
+  const api = { BUDGET, RECIPES, SOURCES, EVENTS, eventApplicable, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, score, roll, buy, nextPlayer, ranking, newPlayer, newState, validState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BurgerRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
