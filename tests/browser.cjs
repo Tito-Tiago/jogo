@@ -139,8 +139,35 @@ async function run() {
     assert.equal(purchases, 30);
     assert.match(await page.locator('main').innerText(), /Ninguém concluiu/);
     assert.ok((await state()).players.every((player) => player.finished && player.purchases.length === 5));
+
+    // Estimativa otimista: a pessoa vê a primeira rolagem e só então decide rolar de novo, uma única vez.
+    await page.evaluate(() => {
+      const next = BurgerRules.newState();
+      next.phase = 'play';
+      next.round = 2;
+      next.currentEvent = 'otimista';
+      next.eventDeck = ['promocao'];
+      next.eventHistory = [{ round: 2, id: 'otimista' }];
+      localStorage.setItem('na-conta-do-hamburguer-v1', JSON.stringify(next));
+    });
+    await page.reload();
+    await tap('[data-buy="0"][data-source="economical"]');
+    await tap('[data-action="confirm-dialog"]');
+    assert.ok(await page.locator('[data-action="reroll"]').isDisabled(), 'Os botões ficam bloqueados enquanto os dados giram.');
+    assert.equal((await state()).pendingResult.canReroll, true);
+    await tap('[data-action="reroll"]');
+    const rerolled = (await state()).players[0].purchases[0];
+    assert.equal(rerolled.rerolled, true);
+    assert.deepEqual(rerolled.firstDice, [4, 4]);
+    assert.equal((await state()).pendingResult.canReroll, false);
+    await page.reload();
+    assert.equal(await page.locator('[data-action="reroll"]').count(), 0, 'Recarregar não permite rolar outra vez.');
+    assert.match(await page.locator('#dialog-content').innerText(), /Primeira rolagem: 4 \+ 4/);
+    await tap('[data-action="continue-result"]');
+    assert.equal((await state()).phase, 'handoff');
+    assert.equal((await state()).players[0].purchases.length, 1);
     assert.deepEqual(errors, []);
-    console.log('PASS: partida multijogador por toque, tutorial, orçamento, cancelamento, dupla confirmação, recarga offline, turnos, resultados e layout responsivo.');
+    console.log('PASS: partida multijogador por toque, tutorial, orçamento, cancelamento, dupla confirmação, recarga offline, turnos, nova rolagem da estimativa otimista, resultados e layout responsivo.');
   } finally {
     await browser.close();
   }
