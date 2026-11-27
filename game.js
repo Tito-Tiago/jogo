@@ -13,6 +13,9 @@
   let confirmAction = null;
   let dialogKind = null;
   let storageAvailable = true;
+  let animateRoll = false;
+  let rollTimer = null;
+  const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const esc = (text) => String(text).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const number = (value, digits = 1) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits });
   const points = (value) => number(value, 2);
@@ -234,6 +237,7 @@
   }
 
   function closeDialog() {
+    clearInterval(rollTimer);
     dialog.close();
     dialogKind = null;
     confirmAction = null;
@@ -255,16 +259,34 @@
     const purchase = player.purchases[state.pendingResult.purchaseIndex];
     const selected = purchase.sourceId === 'selected';
     const canReroll = !!state.pendingResult.canReroll;
+    const animate = animateRoll && !reducedMotion();
+    animateRoll = false;
+    clearInterval(rollTimer);
     dialogKind = 'result';
     confirmAction = null;
     const status = R.complete(player) ? 'Receita concluída! Sua pontuação será comparada quando todos terminarem.' : player.finished ? 'Seu saldo não permite outra compra. A receita ficou incompleta e sua participação foi encerrada.' : `Saldo: ${R.balance(player)} moedas. Faltam ${R.remaining(player).length} ingredientes para concluir.`;
     const actions = canReroll
-      ? `<p class="note"><strong>Estimativa otimista:</strong> quer rolar de novo? Se rolar, fica obrigatoriamente com o novo resultado, mesmo que seja pior.</p><div class="actions"><button type="button" class="accent" data-action="reroll">🎲 Rolar de novo</button><button type="button" class="primary" data-action="keep-roll" autofocus>Ficar com ${purchase.quality}</button></div>`
-      : `<p class="note">${status}</p><button type="button" class="primary wide" data-action="continue-result" autofocus>${state.players.every((item) => item.finished) ? 'Ver resultados' : 'Passar a vez'} →</button>`;
-    dialogContent.innerHTML = `<span class="eyebrow">COMPRA REALIZADA · ${esc(player.name)}</span><h2 id="dialog-title">${purchase.ingredient} na conta!</h2><p class="muted">${R.SOURCES[purchase.sourceId].name} · ${purchase.cost} moedas gastas</p>${purchase.rerolled ? `<p class="roll-label">Primeira rolagem: ${purchase.firstDice.join(' + ')}${selected ? ' + 6' : ''} → ${purchase.firstQuality}. Ficou valendo a segunda.</p>` : ''}<div class="dice" role="img" aria-label="${selected ? `Dado ${purchase.dice[0]}, mais 6` : `Dados ${purchase.dice.join(' e ')}`}">${diceMarkup(purchase.dice, selected)}</div>${purchase.adjustment ? `<p class="roll-label">Ajuste do evento: ${signed(purchase.adjustment)}</p>` : ''}<p class="roll-quality">${purchase.quality}</p><p class="roll-label">pontos de qualidade · média atual ${points(R.average(player))} (faixa ${number(player.estimateLow)}–${number(player.estimateHigh)})</p>${actions}`;
+      ? `<p class="note"><strong>Estimativa otimista:</strong> quer rolar de novo? Se rolar, fica obrigatoriamente com o novo resultado, mesmo que seja pior.</p><div class="actions"><button type="button" class="accent" data-action="reroll" data-roll-lock>🎲 Rolar de novo</button><button type="button" class="primary" data-action="keep-roll" data-roll-lock autofocus>Ficar com ${purchase.quality}</button></div>`
+      : `<p class="note">${status}</p><button type="button" class="primary wide" data-action="continue-result" data-roll-lock autofocus>${state.players.every((item) => item.finished) ? 'Ver resultados' : 'Passar a vez'} →</button>`;
+    dialogContent.innerHTML = `<span class="eyebrow">COMPRA REALIZADA · ${esc(player.name)}</span><h2 id="dialog-title">${purchase.ingredient} na conta!</h2><p class="muted">${R.SOURCES[purchase.sourceId].name} · ${purchase.cost} moedas gastas</p>${purchase.rerolled ? `<p class="roll-label">Primeira rolagem: ${purchase.firstDice.join(' + ')}${selected ? ' + 6' : ''} → ${purchase.firstQuality}. Ficou valendo a segunda.</p>` : ''}<div class="dice ${animate ? 'rolling' : ''}" role="img" aria-label="${selected ? `Dado ${purchase.dice[0]}, mais 6` : `Dados ${purchase.dice.join(' e ')}`}">${diceMarkup(animate ? purchase.dice.map(() => '?') : purchase.dice, selected)}</div><div class="roll-reveal ${animate ? 'pending' : ''}">${purchase.adjustment ? `<p class="roll-label">Ajuste do evento: ${signed(purchase.adjustment)}</p>` : ''}<p class="roll-quality">${purchase.quality}</p><p class="roll-label">pontos de qualidade · média atual ${points(R.average(player))} (faixa ${number(player.estimateLow)}–${number(player.estimateHigh)})</p></div>${actions}`;
     if (!dialog.open) dialog.showModal();
-    dialogContent.querySelector('[autofocus]')?.focus();
-    announce(`Compra realizada: ${purchase.ingredient}, qualidade ${purchase.quality}, saldo ${R.balance(player)} moedas.${canReroll ? ' Você pode rolar de novo ou ficar com este resultado.' : ''}`);
+    const finish = () => {
+      const diceBox = dialogContent.querySelector('.dice');
+      if (diceBox) { diceBox.classList.remove('rolling'); diceBox.innerHTML = diceMarkup(purchase.dice, selected); }
+      dialogContent.querySelector('.roll-reveal')?.classList.remove('pending');
+      dialogContent.querySelectorAll('[data-roll-lock]').forEach((button) => { button.disabled = false; });
+      dialogContent.querySelector('[autofocus]')?.focus();
+      announce(`Compra realizada: ${purchase.ingredient}, qualidade ${purchase.quality}, saldo ${R.balance(player)} moedas.${canReroll ? ' Você pode rolar de novo ou ficar com este resultado.' : ''}`);
+    };
+    if (!animate) return finish();
+    dialogContent.querySelectorAll('[data-roll-lock]').forEach((button) => { button.disabled = true; });
+    const faces = [...dialogContent.querySelectorAll('.die')];
+    let ticks = 0;
+    rollTimer = setInterval(() => {
+      ticks++;
+      faces.forEach((face) => { face.textContent = String(1 + ((ticks * 7 + faces.indexOf(face) * 3) % 6)); });
+      if (ticks >= 10) { clearInterval(rollTimer); finish(); }
+    }, 80);
   }
 
   function requestPurchase(index, sourceId) {
@@ -284,6 +306,7 @@
       R.buy(player, ingredient, sourceId, Math.random, { eventId: state.currentEvent, inspect });
       state.pendingResult = { playerIndex: state.turnIndex, purchaseIndex: player.purchases.length - 1 };
       if (state.currentEvent === 'otimista') state.pendingResult.canReroll = true;
+      animateRoll = true;
       save();
       render();
     });
@@ -358,7 +381,8 @@
         R.rerollLast(player, Math.random);
         player.finished = R.complete(player) || R.balance(player) < R.SOURCES.economical.cost;
         state.pendingResult.canReroll = false;
-          save(); render(); showResult(); break;
+        animateRoll = true;
+        save(); render(); showResult(); break;
       }
       case 'keep-roll':
         if (!state.pendingResult?.canReroll) return;
