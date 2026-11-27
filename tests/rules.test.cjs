@@ -274,3 +274,36 @@ test('faixa de qualidade mais estreita paga mais e errar a faixa tira ponto', ()
   assert.equal(R.rangeScore(player), 2.25);
   assert.deepEqual(R.scoreBreakdown(player), { quality: 8, recipe: 0, cost: 2, range: 2.25, total: 12.25 });
 });
+
+test('estimativa otimista: rola uma vez, decide e só pode rolar de novo uma vez', () => {
+  const state = R.newState();
+  state.phase = 'play';
+  state.currentEvent = 'otimista';
+  const player = state.players[0];
+  R.buy(player, 'Pão', 'economical', () => 0, { eventId: 'otimista' });
+  assert.equal(player.purchases[0].quality, 2);
+  state.pendingResult = { playerIndex: 0, purchaseIndex: 0, canReroll: true };
+  assert.ok(R.validState(JSON.parse(JSON.stringify(state))));
+  R.rerollLast(player, () => .99999);
+  assert.deepEqual(player.purchases[0].dice, [6, 6]);
+  assert.deepEqual(player.purchases[0].firstDice, [1, 1]);
+  assert.equal(player.purchases[0].quality, 12);
+  assert.throws(() => R.rerollLast(player));
+  state.pendingResult.canReroll = false;
+  assert.ok(R.validState(JSON.parse(JSON.stringify(state))));
+  state.currentEvent = 'promocao';
+  state.pendingResult.canReroll = true;
+  assert.equal(R.validState(state), false);
+});
+
+test('nova rolagem mantém os ajustes do evento da compra', () => {
+  const player = R.newPlayer(0);
+  R.buy(player, 'Pão', 'economical', () => .5, { eventId: 'lote' });
+  assert.equal(player.purchases[0].quality, 7);
+  R.rerollLast(player, () => 0);
+  assert.equal(player.purchases[0].quality, 2);
+  assert.equal(player.purchases[0].adjustment, 0);
+  const state = R.newState();
+  state.players[0] = player;
+  assert.ok(R.validState(state));
+});
