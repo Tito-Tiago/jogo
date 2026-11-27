@@ -37,6 +37,7 @@ O formato implementado é competitivo. Não há rede, adversários automáticos 
 - Pontuação, apenas para receita completa: **qualidade média + bônus da receita + precisão do gasto + acerto da faixa**.
 - Precisão do gasto: +2 se o gasto real for igual ao previsto; cada moeda de diferença tira 1 ponto, até −2. Uma revisão de estimativa vale no máximo +1 e nunca piora a previsão original.
 - Acerto da faixa de qualidade média: dentro da faixa vale `3 − 0,5 × largura` (8–8: +3; 8–9: +2,5; 7–10: +1,5; 6–12: 0); fora da faixa vale −1. Faixas estreitas pagam mais porque correm mais risco.
+- A qualidade média atual de cada participante fica visível durante as compras, com aviso de dentro ou fora da faixa prevista.
 - Há um baralho de eventos: uma carta global é revelada por rodada e fica visível na mesa. Ao esgotar o baralho, ele é embaralhado novamente. Cartas que dependem de compras anteriores (Ingrediente defeituoso, Revisão de estimativa) não saem na primeira rodada nem antes de alguém comprar; Mudança de escopo não sai se todos já fazem o Completo. Essas cartas continuam no baralho para uma rodada futura. Eventos podem alterar preços, qualidade e disponibilidade, ou oferecer decisões de escopo, inspeção e revisão de estimativa. A revisão preserva a previsão original no resultado.
 - Não há substituições, devoluções, empréstimos ou pontos por saldo. Um jogador sem compra disponível devido ao evento pode passar a vez.
 - A classificação usa valores não arredondados; a exibição usa até duas casas decimais.
