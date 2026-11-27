@@ -95,7 +95,7 @@ async function run() {
     assert.equal(purchases, 11);
     assert.ok((await state()).players.every((player) => player.finished));
     assert.match(await page.locator('main').innerText(), /Ana venceu/);
-    assert.match(await page.locator('main').innerText(), /8,5/);
+    assert.match(await page.locator('main').innerText(), /8,67/);
     await noOverflow();
     await screenshot('results-touch');
     await tap('.navigation [data-tab="concepts"]');
@@ -128,7 +128,7 @@ async function run() {
       if (current.pendingResult) { await tap('[data-action="continue-result"]'); continue; }
       const source = current.players[current.turnIndex].purchases.length < 4 ? 'selected' : 'economical';
       await page.locator(`[data-buy][data-source="${source}"]:not(:disabled)`).first().tap();
-      if (current.players[current.turnIndex].purchases.length === 3) assert.match(await page.locator('#dialog-content').innerText(), /faltarão moedas/);
+      if (current.players[current.turnIndex].purchases.length === 3) assert.match(await page.locator('#dialog-content').innerText(), /ingredientes restantes custam/);
       await tap('[data-action="confirm-dialog"]');
       purchases++;
       assert.ok(purchases <= 30);
