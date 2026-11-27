@@ -34,7 +34,9 @@ O formato implementado é competitivo. Não há rede, adversários automáticos 
 - Clássico: pão, carne, queijo, molho; bônus 0.
 - Especial: Clássico + alface; bônus 0,5.
 - Completo: Especial + tomate; bônus 1.
-- Pontuação: **qualidade média + bônus**, apenas para receita completa.
+- Pontuação, apenas para receita completa: **qualidade média + bônus da receita + precisão do gasto + acerto da faixa**.
+- Precisão do gasto: +2 se o gasto real for igual ao previsto; cada moeda de diferença tira 1 ponto, até −2. Uma revisão de estimativa vale no máximo +1 e nunca piora a previsão original.
+- Acerto da faixa de qualidade média: dentro da faixa vale `3 − 0,5 × largura` (8–8: +3; 8–9: +2,5; 7–10: +1,5; 6–12: 0); fora da faixa vale −1. Faixas estreitas pagam mais porque correm mais risco.
 - Há um baralho de eventos: uma carta global é revelada por rodada e fica visível na mesa. Ao esgotar o baralho, ele é embaralhado novamente. Cartas que dependem de compras anteriores (Ingrediente defeituoso, Revisão de estimativa) não saem na primeira rodada nem antes de alguém comprar; Mudança de escopo não sai se todos já fazem o Completo. Essas cartas continuam no baralho para uma rodada futura. Eventos podem alterar preços, qualidade e disponibilidade, ou oferecer decisões de escopo, inspeção e revisão de estimativa. A revisão preserva a previsão original no resultado.
 - Não há substituições, devoluções, empréstimos ou pontos por saldo. Um jogador sem compra disponível devido ao evento pode passar a vez.
 - A classificação usa valores não arredondados; a exibição usa até duas casas decimais.
@@ -79,3 +81,4 @@ O teste de interface `tests/browser.cjs` é opcional e usa Playwright com Chromi
 - Encerrar um participante e conferir que os demais continuam.
 - Testar orientações e tamanhos de tela disponíveis no computador.
 - Fazer várias partidas para avaliar se os bônus favorecem demais alguma receita.
+- Conferir se os pontos da estimativa (gasto e faixa) pesam o bastante sem dominar a qualidade.

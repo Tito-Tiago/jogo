@@ -95,7 +95,8 @@ async function run() {
     assert.equal(purchases, 11);
     assert.ok((await state()).players.every((player) => player.finished));
     assert.match(await page.locator('main').innerText(), /Ana venceu/);
-    assert.match(await page.locator('main').innerText(), /8,67/);
+    assert.match(await page.locator("main").innerText(), /10,17/);
+    assert.ok(await page.locator(".score-breakdown").count() >= 1, "Mostra a composição da pontuação.");
     await noOverflow();
     await screenshot('results-touch');
     await tap('.navigation [data-tab="concepts"]');

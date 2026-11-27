@@ -22,6 +22,9 @@
     { id: 'lote', name: 'Lote de qualidade duvidosa', effect: 'Compras econômicas perdem 1 ponto de qualidade, até o mínimo de 2.', concept: 'O preço de aquisição não é o único fator na avaliação de qualidade.' },
     { id: 'revisao', name: 'Revisão de estimativa', effect: 'Você pode registrar uma nova previsão de gasto antes de comprar.', concept: 'Reestimar usa novas informações sem apagar a previsão original.' }
   ];
+  // Pontuação da estimativa. A precisão do gasto e a faixa de qualidade valem pontos,
+  // e faixas mais estreitas recebem bônus maiores porque correm mais risco de errar.
+  const SCORING = { costExact: 2, costFloor: -2, revisedCap: 1, rangeMax: 3, rangeStep: .5, rangeMiss: -1 };
   // Eventos que só fazem sentido depois que alguém já comprou algo.
   const EVENT_REQUIRES_PURCHASE = new Set(['defeito', 'revisao']);
   function eventApplicable(eventId, state) {
@@ -61,7 +64,21 @@
   const remaining = (player) => recipe(player).ingredients.filter((name) => !player.purchases.some((item) => item.ingredient === name));
   const complete = (player) => remaining(player).length === 0;
   const average = (player) => player.purchases.length ? player.purchases.reduce((sum, item) => sum + item.quality, 0) / player.purchases.length : 0;
-  const score = (player) => complete(player) ? average(player) + recipe(player).bonus : null;
+  const costPrecision = (estimate, actual, cap = SCORING.costExact) => Math.min(cap, Math.max(SCORING.costFloor, SCORING.costExact - Math.abs(actual - estimate)));
+  function costScore(player) {
+    const original = costPrecision(player.estimateCost, spent(player));
+    // A revisão protege contra erros grandes, mas vale no máximo +1.
+    return player.revisedEstimate == null ? original : Math.max(original, costPrecision(player.revisedEstimate, spent(player), SCORING.revisedCap));
+  }
+  const rangeReward = (low, high) => Math.max(0, SCORING.rangeMax - SCORING.rangeStep * (high - low));
+  const inRange = (player) => average(player) >= player.estimateLow - 1e-9 && average(player) <= player.estimateHigh + 1e-9;
+  const rangeScore = (player) => inRange(player) ? rangeReward(player.estimateLow, player.estimateHigh) : SCORING.rangeMiss;
+  function scoreBreakdown(player) {
+    if (!complete(player)) return null;
+    const parts = { quality: average(player), recipe: recipe(player).bonus, cost: costScore(player), range: rangeScore(player) };
+    return { ...parts, total: parts.quality + parts.recipe + parts.cost + parts.range };
+  }
+  const score = (player) => complete(player) ? scoreBreakdown(player).total : null;
   function roll(sourceId, random = Math.random) {
     if (!Object.hasOwn(SOURCES, sourceId)) throw new Error('Procedência inválida.');
     const die = () => Math.floor(random() * 6) + 1;
@@ -90,7 +107,7 @@
     return -1;
   }
   function ranking(players) {
-    return [...players].sort((a, b) => (score(b) ?? -1) - (score(a) ?? -1));
+    return [...players].sort((a, b) => (score(b) ?? -Infinity) - (score(a) ?? -Infinity));
   }
   function newPlayer(index) {
     return { id: index + 1, name: `Jogador ${index + 1}`, recipeId: 'classico', estimateCost: 16, estimateLow: 7, estimateHigh: 12, purchases: [], finished: false };
@@ -130,7 +147,7 @@
     if (state.phase === 'results' && !state.players.every((player) => player.finished)) return false;
     return true;
   }
-  const api = { BUDGET, RECIPES, SOURCES, EVENTS, eventApplicable, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, score, roll, buy, nextPlayer, ranking, newPlayer, newState, validState };
+  const api = { BUDGET, RECIPES, SOURCES, EVENTS, SCORING, eventApplicable, eventCost, drawEvent, recipe, spent, balance, remaining, complete, average, costScore, rangeReward, inRange, rangeScore, scoreBreakdown, score, roll, buy, nextPlayer, ranking, newPlayer, newState, validState };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BurgerRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -94,7 +94,10 @@ test('todas as receitas são possíveis dentro do orçamento e recebem bônus co
     assert.ok(R.complete(player));
     assert.ok(player.finished);
     assert.equal(R.average(player), 2);
-    assert.equal(R.score(player), 2 + recipe.bonus);
+    const parts = R.scoreBreakdown(player);
+    assert.equal(parts.recipe, recipe.bonus);
+    assert.equal(parts.range, R.SCORING.rangeMiss);
+    assert.equal(R.score(player), 2 + recipe.bonus + parts.cost + parts.range);
     assert.ok(R.balance(player) >= 0);
     assert.throws(() => R.buy(player, 'Pão', 'economical'));
   }
@@ -241,4 +244,33 @@ test('mudança de escopo não aparece quando todos já fazem o Completo', () => 
   assert.equal(R.eventApplicable('escopo', state), false);
   state.players[1].recipeId = 'classico';
   assert.equal(R.eventApplicable('escopo', state), true);
+});
+
+test('precisão do gasto pontua de +2 a −2 e a revisão vale no máximo +1', () => {
+  const player = R.newPlayer(0);
+  R.recipe(player).ingredients.forEach((name) => R.buy(player, name, 'economical', () => 0));
+  assert.equal(R.spent(player), 12);
+  const cost = (estimate, revised) => R.costScore({ ...player, estimateCost: estimate, revisedEstimate: revised });
+  assert.equal(cost(12), 2);
+  assert.equal(cost(13), 1);
+  assert.equal(cost(10), 0);
+  assert.equal(cost(15), -1);
+  assert.equal(cost(20), -2);
+  assert.equal(cost(20, 12), 1);
+  assert.equal(cost(12, 20), 2, 'revisão ruim não apaga uma previsão original boa');
+});
+
+test('faixa de qualidade mais estreita paga mais e errar a faixa tira ponto', () => {
+  assert.equal(R.rangeReward(8, 8), 3);
+  assert.equal(R.rangeReward(8, 9), 2.5);
+  assert.equal(R.rangeReward(7, 10), 1.5);
+  assert.equal(R.rangeReward(6, 12), 0);
+  assert.equal(R.rangeReward(2, 12), 0);
+  const player = { ...R.newPlayer(0), estimateCost: 12, estimateLow: 6.5, estimateHigh: 7.5 };
+  R.recipe(player).ingredients.forEach((name) => R.buy(player, name, 'economical', () => .5));
+  assert.equal(R.average(player), 8);
+  assert.equal(R.rangeScore(player), R.SCORING.rangeMiss);
+  player.estimateHigh = 8;
+  assert.equal(R.rangeScore(player), 2.25);
+  assert.deepEqual(R.scoreBreakdown(player), { quality: 8, recipe: 0, cost: 2, range: 2.25, total: 12.25 });
 });
